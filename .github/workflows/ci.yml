@@ -12,12 +12,17 @@ concurrency:
 
 jobs:
   # ============================================================================
-  # 1. Quality, Lint, Typecheck & Security Audit
+  # 1. Quality, Typecheck & Security Audit
   # ============================================================================
   quality-and-security:
     name: Code Quality & Security Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Prisma needs DATABASE_URL while validating/generating the schema.
+    # This job does not connect to this database.
+    env:
+      DATABASE_URL: "postgresql://postgres:ci_validation_password@localhost:5432/amrutam_validation?schema=public"
 
     steps:
       - name: Checkout Repository
