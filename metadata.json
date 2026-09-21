@@ -1,0 +1,6 @@
+{
+  "name": "Amrutam Telemedicine Backend",
+  "description": "Production-grade backend system for Amrutam's telemedicine platform featuring appointment booking, concurrency prevention, consultation lifecycle, and observability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

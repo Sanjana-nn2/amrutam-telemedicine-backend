@@ -1,0 +1,613 @@
+openapi: 3.0.3
+info:
+  title: Amrutam Telemedicine Backend API
+  version: 1.0.0
+  description: >
+    Production-grade enterprise backend for Amrutam Telemedicine System.
+    Features concurrency-safe booking, Redis caching with fallback, write idempotency,
+    AES-256-GCM encrypted prescriptions, Prometheus metrics, and RBAC governance.
+servers:
+  - url: http://localhost:3000
+    description: Local Development Server
+  - url: /
+    description: Current Host
+
+tags:
+  - name: Health & System
+    description: Infrastructure liveness, readiness, and metrics probes
+  - name: Authentication & MFA
+    description: User registration, secure JWT authentication, and TOTP 2FA
+  - name: Doctor Catalog
+    description: Doctor profile management, search, and verification
+  - name: Availability Slots
+    description: Doctor slot schedule publishing and caching
+  - name: Consultations
+    description: Concurrency-safe appointment booking and lifecycle state transitions
+  - name: Payments
+    description: Server-side payment checkout and webhook simulation with Saga compensation
+  - name: Prescriptions
+    description: Encrypted medical prescription issuance and retrieval
+  - name: Admin Analytics & Governance
+    description: Aggregated system KPIs, doctor utilization, and audit log exploration
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter standard JWT Bearer access token
+
+  parameters:
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+        example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      description: Unique client-generated UUID for write idempotency
+
+  schemas:
+    StandardError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              example: "Invalid input provided"
+            details:
+              type: object
+            correlationId:
+              type: string
+              example: "123e4567-e89b-12d3-a456-426614174000"
+
+paths:
+  /health/live:
+    get:
+      tags:
+        - Health & System
+      summary: Liveness probe
+      description: Returns process health status
+      responses:
+        "200":
+          description: Process is live
+          content:
+            application/json:
+              example:
+                status: "UP"
+                uptimeSeconds: 120.45
+                timestamp: "2026-09-21T12:00:00.000Z"
+
+  /health/ready:
+    get:
+      tags:
+        - Health & System
+      summary: Readiness probe
+      description: Checks PostgreSQL and Redis connectivity
+      responses:
+        "200":
+          description: Dependencies are reachable
+        "503":
+          description: One or more dependencies are degraded
+
+  /metrics:
+    get:
+      tags:
+        - Health & System
+      summary: Prometheus observability metrics
+      description: Scrapes runtime metrics, HTTP request rates, latencies, and dependency health
+      responses:
+        "200":
+          description: Prometheus formatted plain text metrics
+          content:
+            text/plain:
+              example: |
+                # HELP http_requests_total Total number of HTTP requests
+                # TYPE http_requests_total counter
+                http_requests_total{method="GET",route="/health/live",status_code="200"} 5
+
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Authentication & MFA
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "patient@example.com"
+                password:
+                  type: string
+                  format: password
+                  example: "Amrutam#Pass2026"
+                name:
+                  type: string
+                  example: "Aarav Sharma"
+                role:
+                  type: string
+                  enum: [PATIENT, DOCTOR]
+                  example: "PATIENT"
+      responses:
+        "201":
+          description: User registered successfully
+        "400":
+          description: Validation error
+        "409":
+          description: Email already in use
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication & MFA
+      summary: User login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "patient@example.com"
+                password:
+                  type: string
+                  format: password
+                  example: "Amrutam#Pass2026"
+      responses:
+        "200":
+          description: Authentication successful or MFA required
+        "401":
+          description: Invalid credentials
+
+  /api/v1/doctors:
+    post:
+      tags:
+        - Doctor Catalog
+      summary: Create doctor profile
+      security:
+        - BearerAuth: []
+      description: DOCTOR role only. Creates practitioner profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [specialization, licenseNumber, experienceYears, consultationFee, languages]
+              properties:
+                specialization:
+                  type: string
+                  example: "Kayachikitsa (Internal Medicine)"
+                licenseNumber:
+                  type: string
+                  example: "AYUSH-KA-2024-998811"
+                experienceYears:
+                  type: integer
+                  example: 8
+                consultationFee:
+                  type: number
+                  example: 750.00
+                languages:
+                  type: array
+                  items:
+                    type: string
+                  example: ["Hindi", "English", "Sanskrit"]
+                bio:
+                  type: string
+                  example: "Senior Ayurvedic physician specializing in metabolic disorders."
+      responses:
+        "201":
+          description: Doctor profile created
+        "403":
+          description: Forbidden - DOCTOR role required
+
+
+    get:
+      tags:
+        - Doctor Catalog
+      summary: Search and filter doctor catalog
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+          description: Keyword search across doctor name, bio, and specialization
+        - name: specialization
+          in: query
+          schema:
+            type: string
+        - name: minPrice
+          in: query
+          schema:
+            type: number
+        - name: maxPrice
+          in: query
+          schema:
+            type: number
+        - name: page
+          in: query
+          schema:
+            type: string
+            default: "1"
+        - name: limit
+          in: query
+          schema:
+            type: string
+            default: "10"
+      responses:
+        "200":
+          description: Paginated search results (cached via Redis)
+
+  /api/v1/availability/slots:
+    post:
+      tags:
+        - Availability Slots
+      summary: Batch create availability slots
+      security:
+        - BearerAuth: []
+      description: DOCTOR role only. Publishes time intervals.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slots]
+              properties:
+                slots:
+                  type: array
+                  items:
+                    type: object
+                    required: [startTime, endTime]
+                    properties:
+                      startTime:
+                        type: string
+                        format: date-time
+                      endTime:
+                        type: string
+                        format: date-time
+      responses:
+        "201":
+          description: Slots created successfully
+
+  /api/v1/consultations/book:
+    post:
+      tags:
+        - Consultations
+      summary: Book a consultation slot
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      description: PATIENT role only. Concurrency-safe atomic booking transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctorId, slotId, chiefComplaint]
+              properties:
+                doctorId:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                slotId:
+                  type: string
+                  format: uuid
+                  example: "223e4567-e89b-12d3-a456-426614174000"
+                chiefComplaint:
+                  type: string
+                  minLength: 5
+                  example: "Chronic joint pain and morning stiffness"
+      responses:
+        "201":
+          description: Consultation booked in PENDING_PAYMENT status
+        "409":
+          description: Slot booking conflict or duplicate booking
+
+  /api/v1/consultations:
+    get:
+      tags:
+        - Consultations
+      summary: List consultations
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING_PAYMENT, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Paginated consultations for the authenticated user
+
+  /api/v1/consultations/{id}/status:
+    patch:
+      tags:
+        - Consultations
+      summary: Transition consultation lifecycle status
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW]
+                cancellationReason:
+                  type: string
+      responses:
+        "200":
+          description: Consultation status updated successfully
+
+  /api/v1/payments/checkout:
+    post:
+      tags:
+        - Payments
+      summary: Initiate consultation payment checkout
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      description: PATIENT role only. Amount derived strictly server-side from doctor profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consultationId]
+              properties:
+                consultationId:
+                  type: string
+                  format: uuid
+                paymentMethod:
+                  type: string
+                  enum: [CARD, UPI, NET_BANKING, WALLET]
+                  default: UPI
+      responses:
+        "201":
+          description: Checkout initiated with transaction reference
+
+  /api/v1/payments/simulate-webhook:
+    post:
+      tags:
+        - Payments
+      summary: Simulate payment gateway webhook
+      description: Handles PAYMENT_SUCCESS and PAYMENT_FAILED with automated Saga compensation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionReference, event]
+              properties:
+                transactionReference:
+                  type: string
+                  example: "PAY-SIM-1774267200-abcd"
+                event:
+                  type: string
+                  enum: [PAYMENT_SUCCESS, PAYMENT_FAILED]
+                failureReason:
+                  type: string
+      responses:
+        "200":
+          description: Webhook processed idempotently
+
+  /api/v1/prescriptions:
+    post:
+      tags:
+        - Prescriptions
+      summary: Create prescription
+      security:
+        - BearerAuth: []
+      description: DOCTOR role only. Assigned doctor creates encrypted prescription for consultation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consultationId, diagnosis, medications, digitalSignature]
+              properties:
+                consultationId:
+                  type: string
+                  format: uuid
+                diagnosis:
+                  type: string
+                  minLength: 3
+                  example: "Vata-Kapha imbalance manifesting as chronic migraine"
+                medications:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, dosage, frequency, duration]
+                    properties:
+                      name:
+                        type: string
+                        example: "Brahmi Vati"
+                      dosage:
+                        type: string
+                        example: "250mg"
+                      frequency:
+                        type: string
+                        example: "Twice daily after meals"
+                      duration:
+                        type: string
+                        example: "14 days"
+                      instructions:
+                        type: string
+                        example: "Consume with lukewarm water"
+                lifestyleAdvice:
+                  type: string
+                  example: "Avoid daytime sleep and cold draughts."
+                followUpDate:
+                  type: string
+                  format: date-time
+                digitalSignature:
+                  type: string
+                  example: "DIGISIGN-DOC-AYUSH-2026-99"
+      responses:
+        "201":
+          description: Prescription created and encrypted at rest
+        "403":
+          description: Unrelated doctor or unauthorized role
+        "409":
+          description: Duplicate prescription for consultation
+
+  /api/v1/prescriptions/{id}:
+    get:
+      tags:
+        - Prescriptions
+      summary: Get prescription by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Decrypted prescription details
+        "403":
+          description: Unauthorized access (neither patient, doctor, nor admin)
+
+  /api/v1/prescriptions/consultation/{consultationId}:
+    get:
+      tags:
+        - Prescriptions
+      summary: Get prescription by consultation ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: consultationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Decrypted prescription details
+
+  /api/v1/admin/analytics/overview:
+    get:
+      tags:
+        - Admin Analytics & Governance
+      summary: Aggregated business and consultation KPIs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: System overview analytics metrics
+
+  /api/v1/admin/analytics/utilization:
+    get:
+      tags:
+        - Admin Analytics & Governance
+      summary: Doctor utilization, specialization trends, and slot metrics
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: doctorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Utilization and trend analytics
+
+  /api/v1/admin/audit-logs:
+    get:
+      tags:
+        - Admin Analytics & Governance
+      summary: Paginated system audit logs
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Filtered audit logs trail
