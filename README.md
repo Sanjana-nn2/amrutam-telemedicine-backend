@@ -1,6 +1,6 @@
 ﻿# Amrutam Telemedicine Backend
 
-[![CI Pipeline](https://github.com/amrutam/telemedicine-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/amrutam/telemedicine-backend/actions)
+[![CI Pipeline](https://github.com/Sanjana-nn2/amrutam-telemedicine-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Sanjana-nn2/amrutam-telemedicine-backend/actions)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
@@ -13,20 +13,26 @@ A production-grade, high-concurrency backend for the **Amrutam Telemedicine Plat
 
 ## Architecture Summary
 
-```
-                       [ Load Balancer / API Gateway ]
-                                      â”‚
-              â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-              â–¼                                               â–¼
-      [ Express API Pod 1 ]                           [ Express API Pod 2 ]
-      (Stateless / TS / Zod)                          (Stateless / TS / Zod)
-              â”‚                                               â”‚
-      â”Œâ”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”
-      â–¼                               â–¼                               â–¼
-[ Redis 7 Cluster ]        [ PostgreSQL 16 Primary ]        [ Async Job Worker ]
-- Cache-Aside (Doctors)    - Row-Level Locking (Slots)      - Event Notification
-- Rate Limiting            - AES-256-GCM PHI at Rest        - Exponential Backoff
-- Session Cache            - Write Idempotency Records      - Prometheus Metrics
+```text
+                      +-----------------------------+
+                       | Load Balancer / API Gateway |
+                       +--------------+--------------+
+                                      |
+                       +--------------+--------------+
+                       |                             |
+               +-------v-------+             +-------v-------+
+               | Express API 1 |             | Express API N |
+               | Stateless API |             | Stateless API |
+               +-------+-------+             +-------+-------+
+                       |                             |
+                       +--------------+--------------+
+                                      |
+              +-----------------------+-----------------------+
+              |                       |                       |
+      +-------v-------+      +--------v---------+     +-------v--------+
+      | Redis 7       |      | PostgreSQL 16   |     | Async Worker   |
+      | Cache         |      | Primary DB      |     | Retry / Events |
+      +---------------+      +------------------+     +----------------+
 ```
 
 ---
@@ -46,33 +52,40 @@ A production-grade, high-concurrency backend for the **Amrutam Telemedicine Plat
 
 ## Repository Structure
 
-```
-â”œâ”€â”€ .github/workflows/ci.yml       # GitHub Actions CI/CD Pipeline
-â”œâ”€â”€ docs/                          # Technical Documentation & Diagrams
-â”‚   â”œâ”€â”€ ARCHITECTURE.md            # System Architecture, LATENCY & SLAs
-â”‚   â”œâ”€â”€ ER_DIAGRAM.md              # Mermaid Entity Relationship Diagram
-â”‚   â”œâ”€â”€ SECURITY_AND_THREAT_MODEL.md # OWASP Checklist & STRIDE Threat Model
-â”‚   â”œâ”€â”€ SCALABILITY_AND_DR.md      # Capacity Math, Partitioning & Disaster Recovery
-â”‚   â”œâ”€â”€ RETRY_AND_BACKOFF.md       # Exponential Backoff with Jitter
-â”‚   â””â”€â”€ openapi.yaml               # OpenAPI 3.0.3 Specification
-â”œâ”€â”€ prisma/
-â”‚   â”œâ”€â”€ schema.prisma              # Complete Relational Domain Schema
-â”‚   â”œâ”€â”€ seed.ts                    # Idempotent Database Seeder
-â”‚   â””â”€â”€ migrations/                # Database Migration History
-â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ config/                    # Environment & Database Configuration
-â”‚   â”œâ”€â”€ middleware/                # Auth, RBAC, Idempotency, Rate Limit, Metrics
-â”‚   â”œâ”€â”€ modules/                   # Domain Modules (Auth, Doctors, Bookings, Payments, Prescriptions, Admin)
-â”‚   â”œâ”€â”€ utils/                     # Encryption, JWT, Caching, Retry, Tracing
-â”‚   â”œâ”€â”€ app.ts                     # Express Application Factory
-â”‚   â””â”€â”€ server.ts                  # Server Entry Point & Graceful Shutdown
-â”œâ”€â”€ tests/
-â”‚   â”œâ”€â”€ unit/                      # Fast Isolated Unit Tests
-â”‚   â”œâ”€â”€ integration/               # API & Observability Integration Tests
-â”‚   â””â”€â”€ concurrency/               # Real PostgreSQL Multi-Client Concurrency Tests
-â”œâ”€â”€ docker-compose.yml             # Local Orchestration (API, Postgres, Redis)
-â”œâ”€â”€ Dockerfile                     # Multi-Stage Production Alpine Image
-â””â”€â”€ README.md
+```text
+.github/
+  workflows/
+    ci.yml
+
+docs/
+  ARCHITECTURE.md
+  ER_DIAGRAM.md
+  SECURITY_AND_THREAT_MODEL.md
+  SCALABILITY_AND_DR.md
+  RETRY_AND_BACKOFF.md
+  openapi.yaml
+
+prisma/
+  schema.prisma
+  seed.ts
+  migrations/
+
+src/
+  config/
+  middleware/
+  modules/
+  utils/
+  app.ts
+  server.ts
+
+tests/
+  unit/
+  integration/
+  concurrency/
+
+docker-compose.yml
+Dockerfile
+README.md
 ```
 
 ---
@@ -91,8 +104,8 @@ A production-grade, high-concurrency backend for the **Amrutam Telemedicine Plat
 
 ### 1. Clone & Install Dependencies
 ```bash
-git clone https://github.com/amrutam/telemedicine-backend.git
-cd telemedicine-backend
+git clone https://github.com/Sanjana-nn2/amrutam-telemedicine-backend.git
+cd amrutam-telemedicine-backend
 npm ci
 ```
 
@@ -142,7 +155,7 @@ The seed script populates the following accounts for testing (Password: `Passwor
 | :--- | :--- | :--- | :--- |
 | **Admin** | `admin@amrutam.co.in` | `Password123!` | System administrator with full analytics & audit access |
 | **Doctor** | `dr.priya@amrutam.co.in` | `Password123!` | Verified Ayurvedic Doctor (Kayachikitsa) with active slots |
-| **Doctor** | `dr.ananya@amrutam.co.in` | `Password123!` | Verified Ayurvedic Doctor (Panchakarma) with active slots |
+| **Doctor** | `dr.anand@amrutam.co.in` | `Password123!` | Verified Ayurvedic Doctor (Panchakarma) with active slots |
 | **Patient** | `patient.demo@amrutam.co.in` | `Password123!` | Sample patient account for booking & payments |
 
 ---
@@ -182,7 +195,7 @@ npm run build
 
 ### 1. Patient Reserves Slot (Idempotent POST)
 ```bash
-curl -X POST http://localhost:3000/api/v1/consultations \
+curl -X POST http://localhost:3000/api/v1/consultations/book \
   -H "Authorization: Bearer <PATIENT_JWT>" \
   -H "Idempotency-Key: idemp-req-unique-uuid-12345" \
   -H "Content-Type: application/json" \
@@ -194,7 +207,7 @@ curl -X POST http://localhost:3000/api/v1/consultations \
 ```
 - **Atomically updates slot status** to `LOCKED`.
 - **Creates consultation** in `PENDING_PAYMENT` state.
-- **Replaying with same key & payload** returns the cached `201` response with `X-Cache-Idempotency: HIT`.
+- **Replaying with same key & payload** returns the cached `201` response with `Idempotent-Replay: true`.
 
 ### 2. Patient Checkout & Payment
 ```bash
